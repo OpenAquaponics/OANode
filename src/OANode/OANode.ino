@@ -42,9 +42,19 @@
 #include <SPI.h>
 #include <Ethernet.h>
 
+#include <avr/sleep.h>
+#include <avr/wdt.h>
+
 /* defines */
 #define NODE_ID        (1) /* This needs to be unique */
 #define CHIP_SELECT    (4) /* On the Ethernet Shield, CS is pin 4. */
+
+#ifndef cbi
+# define cbi(sfr, bit) (_SFR_BYTE(sfr) &= ~_BV(bit))
+#endif
+#ifndef sbi
+# define sbi(sfr, bit) (_SFR_BYTE(sfr) |= _BV(bit))
+#endif
 
 /* enum */
 
@@ -57,7 +67,9 @@ typedef struct {
 } OANode_Cfg_t;
 
 typedef struct {
+  int mWakeup;
   unsigned long mStart;
+  int mExecution;
   bool  mOverflow;
 } Time_t;
 
@@ -90,6 +102,7 @@ void setup() {
 
   /* Open the serial port */
   Serial.begin(112500);
+
 
   /* Initialize the SD card */
   Serial.print("INFO: Initializing SD card ... ");
@@ -139,6 +152,7 @@ void setup() {
   /* Force the main loop to start sampling immediately */
   mTime.mStart = millis();
   mTime.mOverflow = false;
+  mTime.mExecution = 0;
 }
 
 
@@ -149,29 +163,29 @@ void loop() {
   /* Determine if it's time for the loop to start, handles the overflow at ~50 days */
   unsigned long mCurrTime = millis();
   if(mTime.mOverflow) {
-    if(mCurrTime < 9000000) {
+    if(mCurrTime < (unsigned long)9000000) {
       mTime.mOverflow = false;
     }
     return;
   }
   else if(mCurrTime >= mTime.mStart) { /* It's time to take a sample, compute the next time step */
-    mTime.mStart    = mCurrTime + (mCfg.mPollPeriodSecs * 1000);
+    mTime.mStart    = mCurrTime + (unsigned long)(mCfg.mPollPeriodSecs * 1000) - (unsigned long)(mCurrTime - mTime.mStart);
     mTime.mOverflow = (mTime.mStart < mCurrTime) ? true : false;
   }
   else { /* Not time for a sample, just return */
     return;
   }
 
-  /* Build the CSV string to be written to the file or ethernet */
-  String mDataStr = "";
+  /* Variable Declaration */
+  String mDataStr = String(mCurrTime) + "," + String(mTime.mExecution);
   char mTmpBuff[32];
+  float mVal = 0.0;
+
+  /* Build the CSV string to be written to the file or ethernet */
   for(unsigned int i = 0; i < sizeof(mAnalogPins); i++) {
-    float mVal = (float)analogRead(i) * mAnalogConv[i];
+    mVal = (float)analogRead(i) * mAnalogConv[i];
     dtostrf(mVal, 1, 2, mTmpBuff);
-    mDataStr += String(mTmpBuff); /* Does this stop at the '\0' at the end of the string? */
-    if(i < sizeof(mAnalogPins)) {
-      mDataStr += ",";
-    }
+    mDataStr += "," + String(mTmpBuff); /* Does this stop at the '\0' at the end of the string? */
   }
 
   /* If Ethernet is available, send it to the server */
@@ -205,5 +219,85 @@ void loop() {
     /* TODO - write the system time to the cfg file so we have the latest timestamp ... helps minimize timestamp problems */
   }
 
+  mTime.mExecution = millis() - mCurrTime;
+
   /* TODO - Possbily send processor to low power mode for 'X' seconds to save more power */
+  
 }
+
+
+
+
+
+
+
+
+
+#if 0
+
+  /* This is template code found online to put the AVR into low power mode.  Will put this capability in at a future time */
+
+#if 0
+  /* TODO - Put in setup() */
+  // CPU Sleep Modes 
+  // SM2 SM1 SM0 Sleep Mode
+  // 0    0  0 Idle
+  // 0    0  1 ADC Noise Reduction
+  // 0    1  0 Power-down
+  // 0    1  1 Power-save
+  // 1    0  0 Reserved
+  // 1    0  1 Reserved
+  // 1    1  0 Standby(1)
+
+  cbi(SMCR,SE);      // sleep enable, power down mode
+  cbi(SMCR,SM0);     // power down mode
+  sbi(SMCR,SM1);     // power down mode
+  cbi(SMCR,SM2);     // power down mode
+
+  setup_watchdog(7);
+#endif
+
+//****************************************************************  
+// set system into the sleep state 
+// system wakes up when wtchdog is timed out
+void system_sleep() {
+
+  cbi(ADCSRA,ADEN);                    // switch ADC OFF
+  set_sleep_mode(SLEEP_MODE_PWR_DOWN); // sleep mode is set here
+  sleep_enable();                      /* Enable the system sleep */
+  sleep_mode();                        // System sleeps here
+  sleep_disable();                     // System continues execution here when watchdog timed out 
+  sbi(ADCSRA,ADEN);                    // switch ADC ON
+
+}
+
+//****************************************************************
+// 0=16ms, 1=32ms,2=64ms,3=128ms,4=250ms,5=500ms
+// 6=1 sec,7=2 sec, 8=4 sec, 9= 8sec
+void setup_watchdog(int ii) {
+
+  byte bb;
+  int ww;
+  if (ii > 9 ) ii=9;
+  bb=ii & 7;
+  if (ii > 7) bb|= (1<<5);
+  bb|= (1<<WDCE);
+  ww=bb;
+  Serial.println(ww);
+
+
+  MCUSR &= ~(1<<WDRF);
+  // start timed sequence
+  WDTCSR |= (1<<WDCE) | (1<<WDE);
+  // set new watchdog timeout value
+  WDTCSR = bb;
+  WDTCSR |= _BV(WDIE);
+}
+
+//****************************************************************  
+// Watchdog Interrupt Service / is executed when  watchdog timed out
+ISR(WDT_vect) {
+  mTime.mWakeup = true;  // set global flag
+}
+
+#endif
