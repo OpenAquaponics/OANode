@@ -69,7 +69,9 @@ typedef struct {
 typedef struct {
   int mWakeup;
   unsigned long mStart;
-  int mExecution;
+  char val1[4];
+  unsigned long mExecution;
+  char val2[4];
   bool  mOverflow;
 } Time_t;
 
@@ -148,7 +150,7 @@ void setup() {
   if(mCfg.mSdAvail) {
     /* TODO - Write this data to SD card so next power cycle it will have the latest infomation if eth is unavailable */
   }
-  
+
   /* Force the main loop to start sampling immediately */
   mTime.mStart = millis();
   mTime.mOverflow = false;
@@ -163,8 +165,9 @@ void loop() {
   /* Determine if it's time for the loop to start, handles the overflow at ~50 days */
   unsigned long mCurrTime = millis();
   if(mTime.mOverflow) {
-    if(mCurrTime < (unsigned long)9000000) {
+    if(mCurrTime < (unsigned long)100000) {
       mTime.mOverflow = false;
+      Serial.println("Here");
     }
     return;
   }
@@ -177,15 +180,15 @@ void loop() {
   }
 
   /* Variable Declaration */
-  String mDataStr = String(mCurrTime) + "," + String(mTime.mExecution);
-  char mTmpBuff[32];
+  char mDataStr[128]; /* This could be smaller is necessary */
   float mVal = 0.0;
-
+  
   /* Build the CSV string to be written to the file or ethernet */
+  sprintf(&mDataStr[0], "%lu,%lu", mCurrTime, mTime.mExecution);
   for(unsigned int i = 0; i < sizeof(mAnalogPins); i++) {
-    mVal = (float)analogRead(i) * mAnalogConv[i];
-    dtostrf(mVal, 1, 2, mTmpBuff);
-    mDataStr += "," + String(mTmpBuff); /* Does this stop at the '\0' at the end of the string? */
+    mVal = (mAnalogPins[i]) ? (float)analogRead(i) * (float)mAnalogConv[i] : 0.0;
+    sprintf(&mDataStr[strlen(mDataStr)], ",");
+    dtostrf(mVal, 1, 2, &mDataStr[strlen(mDataStr)]);
   }
 
   /* If Ethernet is available, send it to the server */
@@ -219,6 +222,7 @@ void loop() {
     /* TODO - write the system time to the cfg file so we have the latest timestamp ... helps minimize timestamp problems */
   }
 
+  /* Determine the execution time of the frame */
   mTime.mExecution = millis() - mCurrTime;
 
   /* TODO - Possbily send processor to low power mode for 'X' seconds to save more power */
