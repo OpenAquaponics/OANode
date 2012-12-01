@@ -79,9 +79,9 @@ typedef struct {
 /* Default Ethernet configuration */
 /* TODO - Should this go in the global structure?? */
 byte mMAC[] = {0x90, 0xA2, 0xDA, 0x0D, 0x30, 0x5E};  /* OANode network MAC address */
-byte mLocalIP[] = {192, 168, 0, 189}; /* ONANode local IP address */
-byte mServerIP[] = { 64, 233, 187, 99 };  /* OAServer IP address */
-int  mPortNum = 4567;  /* OAServer port number */
+byte mLocalIP[] = {192, 168, 1, 200}; /* ONANode local IP address */
+byte mServerIP[] = { 192, 168, 1, 26 };  /* OAServer IP address */
+int  mPortNum = 50000;  /* OAServer port number */
 
 /* Order of analog pins: mTempAirIndoor, mTempAirOutdoor, mTempWater, mHumidityIndoor, mHumidityOutdoor, mWaterLevel, mBattaryVoltage, mSolarPanelVoltage */
 char mAnalogPins[]  = {  10,  12,  14,   0,   0,  15,   0,   0 }; /* 0 = not used, else pin number */
@@ -194,6 +194,7 @@ void loop() {
   /* If Ethernet is available, send it to the server */
   if(mCfg.mEthAvail) {
     /* TODO - Send Statistics packet to OAServer */
+    Serial.println(mDataStr);
   }
   /* Else if SD is available, save it to the SD card */
   else if(mCfg.mSdAvail) {
