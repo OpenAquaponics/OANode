@@ -48,6 +48,7 @@
 /* defines */
 #define NODE_ID        (1) /* This needs to be unique */
 #define CHIP_SELECT    (4) /* On the Ethernet Shield, CS is pin 4. */
+#define OASERVER_STATISTICS_DATA    (2000)
 
 #ifndef cbi
 # define cbi(sfr, bit) (_SFR_BYTE(sfr) &= ~_BV(bit))
@@ -75,6 +76,29 @@ typedef struct {
   bool  mOverflow;
 } Time_t;
 
+/* typedefs */
+typedef struct {
+  long mSync;        /* 0xCABE */
+  long mNumBytes;    /* Number of bytes in the payload */
+  long mTimeTagSec;  /* NTP(?) time in secs */
+  long mDeviceId;
+  long mMsgType;
+  long mCheckSum;    /* Checksum of just payload */
+} PacketHeader_t;
+
+typedef struct {
+  PacketHeader_t mHdr;
+  float mTempAirIndoor;
+  float mTempAirOutdoor;
+  float mTempWater;
+  float mHumidityIndoor;
+  float mHumidityOutdoor;
+  float mWaterLevel;
+  float mBattaryVoltage;
+  float mSolarPanelVoltage;
+} PktStatistics_t;
+
+
 /* globals */
 /* Default Ethernet configuration */
 /* TODO - Should this go in the global structure?? */
@@ -90,7 +114,33 @@ float mAnalogConv[] = { 1.0, 1.0, 1.0, 0.0, 0.0, 1.0, 0.0, 0.0 }; /* Converts an
 OANode_Cfg_t mCfg;
 EthernetClient mClientSock;
 Time_t mTime;
-  
+PktStatistics_t mStatPkt;
+
+/***********************************/
+/* For some reason I can't keep the connection to the remote server
+   open from the transition from setup() to loop().  Everything says
+   it's working but client.println() just blocks indefinitely.  This
+   function is a hack to just always attempt a remote server connection. */
+/* OAServer needs the ablilty to handle more than 1 socket.  The
+   above problem might be because of the server is not accepting the
+   new connections. */
+bool ethAvailable(void) {
+/***********************************/
+  mClientSock.stop();
+  Ethernet.begin(mMAC, mLocalIP);
+  return(mClientSock.connect(mServerIP, mPortNum));
+}
+
+
+/***********************************/
+bool ethWrite(char *mBuff, int mNumBytes) {
+/***********************************/
+  for(int i = 0; i < mNumBytes; i++) {
+    mClientSock.write(mBuff[i]); 
+  }
+}
+
+
 /***********************************/
 void setup() {
 /***********************************/
@@ -134,7 +184,8 @@ void setup() {
   }
 
   /* Update the node with the latest system information */
-  if(mCfg.mEthAvail) {
+  if(ethAvailable()) {
+    Serial.println("Got here");
     /* TODO - Sync with NTP to get the system time (or request it from the server */
     /* TODO - Request the latest node configuration data */
   }
@@ -152,9 +203,17 @@ void setup() {
   }
 
   /* Force the main loop to start sampling immediately */
-  mTime.mStart = millis();
-  mTime.mOverflow = false;
+  mTime.mStart     = millis();
+  mTime.mOverflow  = false;
   mTime.mExecution = 0;
+  
+  /* Preload the packet */
+  mStatPkt.mHdr.mSync     = 0xCABE;
+  mStatPkt.mHdr.mNumBytes = sizeof(PktStatistics_t) - sizeof(PacketHeader_t);
+  mStatPkt.mHdr.mDeviceId = mCfg.mNodeId;
+  mStatPkt.mHdr.mMsgType  = OASERVER_STATISTICS_DATA;
+  
+  Serial.println("INFO: Completed setup()");
 }
 
 
@@ -180,21 +239,24 @@ void loop() {
   }
 
   /* Variable Declaration */
-  char mDataStr[128]; /* This could be smaller is necessary */
+  char mDataStr[70]; /* This could be smaller is necessary */
   float mVal = 0.0;
-  
+    
   /* Build the CSV string to be written to the file or ethernet */
+  mStatPkt.mHdr.mTimeTagSec = mCurrTime;  /* NTP(?) time in secs */
   sprintf(&mDataStr[0], "%lu,%lu", mCurrTime, mTime.mExecution);
   for(unsigned int i = 0; i < sizeof(mAnalogPins); i++) {
+    ((float*)&mStatPkt.mTempAirIndoor)[i] = (mAnalogPins[i]) ? (float)analogRead(i) * (float)mAnalogConv[i] : 0.0;
     mVal = (mAnalogPins[i]) ? (float)analogRead(i) * (float)mAnalogConv[i] : 0.0;
     sprintf(&mDataStr[strlen(mDataStr)], ",");
     dtostrf(mVal, 1, 2, &mDataStr[strlen(mDataStr)]);
   }
 
   /* If Ethernet is available, send it to the server */
-  if(mCfg.mEthAvail) {
+  if(ethAvailable()) {
     /* TODO - Send Statistics packet to OAServer */
     Serial.println(mDataStr);
+    ethWrite((char*)&mStatPkt, sizeof(mStatPkt));
   }
   /* Else if SD is available, save it to the SD card */
   else if(mCfg.mSdAvail) {
@@ -208,9 +270,10 @@ void loop() {
   else {
     Serial.println(mDataStr);
   }
-  
+
+#if 0  
   /* Service any server requests here */
-  if(mCfg.mEthAvail) {
+  if(ethAvailable()) {
     /* TODO - 
         switch(request type)
           case GetLatestData: return mDataStr;
@@ -218,6 +281,7 @@ void loop() {
           case NTPSync: save the incoming system time as the current seconds counter // This logic will have to be thought out to get the system times synced
     */
   }
+#endif
   
   if(mCfg.mSdAvail) {
     /* TODO - write the system time to the cfg file so we have the latest timestamp ... helps minimize timestamp problems */
@@ -228,6 +292,8 @@ void loop() {
 
   /* TODO - Possbily send processor to low power mode for 'X' seconds to save more power */
   
+  /* TODO - This Ethernet things really needs to be figured out */
+  mClientSock.stop();
 }
 
 
