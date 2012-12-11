@@ -49,6 +49,7 @@
 #define NODE_ID        (1) /* This needs to be unique */
 #define CHIP_SELECT    (4) /* On the Ethernet Shield, CS is pin 4. */
 #define OASERVER_STATISTICS_DATA    (2000)
+#define MAX_CHANNELS  (8) /* Maximum number of channels supported in the database */
 
 #ifndef cbi
 # define cbi(sfr, bit) (_SFR_BYTE(sfr) &= ~_BV(bit))
@@ -56,6 +57,7 @@
 #ifndef sbi
 # define sbi(sfr, bit) (_SFR_BYTE(sfr) |= _BV(bit))
 #endif
+
 
 /* enum */
 
@@ -88,16 +90,13 @@ typedef struct {
 
 typedef struct {
   PacketHeader_t mHdr;
-  float mTempAirIndoor;
-  float mTempAirOutdoor;
-  float mTempWater;
-  float mHumidityIndoor;
-  float mHumidityOutdoor;
-  float mWaterLevel;
-  float mBattaryVoltage;
-  float mSolarPanelVoltage;
-} PktStatistics_t;
+  float mVal[MAX_CHANNELS];
+} PktSample_t;
 
+typedef struct {
+  byte mPin;
+  float mConv;
+} Analog_t;
 
 /* globals */
 /* Default Ethernet configuration */
@@ -107,14 +106,18 @@ byte mLocalIP[] = {192, 168, 1, 200}; /* ONANode local IP address */
 byte mServerIP[] = { 192, 168, 1, 26 };  /* OAServer IP address */
 int  mPortNum = 50000;  /* OAServer port number */
 
-/* Order of analog pins: mTempAirIndoor, mTempAirOutdoor, mTempWater, mHumidityIndoor, mHumidityOutdoor, mWaterLevel, mBattaryVoltage, mSolarPanelVoltage */
-char mAnalogPins[]  = {  10,  12,  14,   0,   0,  15,   0,   0 }; /* 0 = not used, else pin number */
-float mAnalogConv[] = { 1.0, 1.0, 1.0, 0.0, 0.0, 1.0, 0.0, 0.0 }; /* Converts analog to output value (Volts, Temp C, Humidity, etc) */
+/* mChannelName sets what each channel represents in the database */
+Analog_t mAnalog[] = {
+  {10,  1.0},
+  {12,  1.0},
+  {14,  1.0},
+};
+
  
 OANode_Cfg_t mCfg;
 EthernetClient mClientSock;
 Time_t mTime;
-PktStatistics_t mStatPkt;
+PktSample_t mPkt;
 
 /***********************************/
 /* For some reason I can't keep the connection to the remote server
@@ -127,6 +130,8 @@ PktStatistics_t mStatPkt;
 bool ethAvailable(void) {
 /***********************************/
   mClientSock.stop();
+  /* TODO - Should mCfg.mEthAvail be checked here and the OANode before
+  sending data to the server?? */
   Ethernet.begin(mMAC, mLocalIP);
   return(mClientSock.connect(mServerIP, mPortNum));
 }
@@ -185,17 +190,13 @@ void setup() {
 
   /* Update the node with the latest system information */
   if(ethAvailable()) {
-    Serial.println("Got here");
     /* TODO - Sync with NTP to get the system time (or request it from the server */
     /* TODO - Request the latest node configuration data */
   }
   
   /* Configure all of the sensors */
-  for(unsigned int i = 0; i < sizeof(mAnalogPins); i++) {
-    /* Determine if the sensor is connected. */
-    if(mAnalogPins[i]) {
-      pinMode(mAnalogPins[i], INPUT);
-    }
+  for(unsigned int i = 0; i < sizeof(mAnalog) / sizeof(Analog_t); i++) {
+    pinMode(mAnalog[i].mPin, INPUT);
   }
 
   if(mCfg.mSdAvail) {
@@ -208,10 +209,10 @@ void setup() {
   mTime.mExecution = 0;
   
   /* Preload the packet */
-  mStatPkt.mHdr.mSync     = 0xCABE;
-  mStatPkt.mHdr.mNumBytes = sizeof(PktStatistics_t) - sizeof(PacketHeader_t);
-  mStatPkt.mHdr.mDeviceId = mCfg.mNodeId;
-  mStatPkt.mHdr.mMsgType  = OASERVER_STATISTICS_DATA;
+  mPkt.mHdr.mSync     = 0xCABE;
+  mPkt.mHdr.mNumBytes = sizeof(PktSample_t) - sizeof(PacketHeader_t);
+  mPkt.mHdr.mDeviceId = mCfg.mNodeId;
+  mPkt.mHdr.mMsgType  = OASERVER_STATISTICS_DATA;
   
   Serial.println("INFO: Completed setup()");
 }
@@ -226,7 +227,6 @@ void loop() {
   if(mTime.mOverflow) {
     if(mCurrTime < (unsigned long)100000) {
       mTime.mOverflow = false;
-      Serial.println("Here");
     }
     return;
   }
@@ -240,23 +240,21 @@ void loop() {
 
   /* Variable Declaration */
   char mDataStr[70]; /* This could be smaller is necessary */
-  float mVal = 0.0;
     
   /* Build the CSV string to be written to the file or ethernet */
-  mStatPkt.mHdr.mTimeTagSec = mCurrTime;  /* NTP(?) time in secs */
+  mPkt.mHdr.mTimeTagSec = mCurrTime;  /* NTP(?) time in secs */
   sprintf(&mDataStr[0], "%lu,%lu", mCurrTime, mTime.mExecution);
-  for(unsigned int i = 0; i < sizeof(mAnalogPins); i++) {
-    ((float*)&mStatPkt.mTempAirIndoor)[i] = (mAnalogPins[i]) ? (float)analogRead(i) * (float)mAnalogConv[i] : 0.0;
-    mVal = (mAnalogPins[i]) ? (float)analogRead(i) * (float)mAnalogConv[i] : 0.0;
+  for(unsigned int i = 0; (i < sizeof(mAnalog) / sizeof(Analog_t)) && (i < MAX_CHANNELS); i++) {
+    mPkt.mVal[i] = (float)analogRead(i) * (float)mAnalog[i].mConv;
     sprintf(&mDataStr[strlen(mDataStr)], ",");
-    dtostrf(mVal, 1, 2, &mDataStr[strlen(mDataStr)]);
+    dtostrf(mPkt.mVal[i], 1, 2, &mDataStr[strlen(mDataStr)]);
   }
 
   /* If Ethernet is available, send it to the server */
   if(ethAvailable()) {
     /* TODO - Send Statistics packet to OAServer */
     Serial.println(mDataStr);
-    ethWrite((char*)&mStatPkt, sizeof(mStatPkt));
+    ethWrite((char*)&mPkt, sizeof(mPkt));
   }
   /* Else if SD is available, save it to the SD card */
   else if(mCfg.mSdAvail) {
