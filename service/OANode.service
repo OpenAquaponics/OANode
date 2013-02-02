@@ -1,0 +1,10 @@
+[Unit]
+Description=OANode monitors an aquaponics system and reports to OAServer
+After=
+
+[Service]
+Type=simple
+ExecStart=/var/www/html/service/start_OANode
+
+[Install]
+WantedBy=multi-user.target

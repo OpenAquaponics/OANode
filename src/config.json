@@ -1,0 +1,11 @@
+{
+  "sUsername":"nestinator",
+  "sSystemId":"IK89EQ2",
+  "sNodeId":"ER123ER",
+  "sChannelName":"water level,sun sensor,air temp, water temp",
+  "sChannelUnits":"mm,lum,F,C",
+  "mPollingPeriod":"10",
+  "bPublic":"1",
+  "sDescription":"Adding to the description"
+}
+
