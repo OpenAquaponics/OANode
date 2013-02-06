@@ -1,4 +1,4 @@
 OANode
-======
+========
 
-Open Aquaponics node software (AVR/Arduino)
+Open Aquaponics sampling node (Php)
